@@ -1,85 +1,73 @@
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{self, Sender, Receiver};
 use std::thread;
 
 use cpal::traits::{HostTrait, DeviceTrait, StreamTrait};
-use cpal::InputCallbackInfo;
+use cpal::{InputCallbackInfo, OutputCallbackInfo};
 use macroquad::prelude::*;
 
 fn do_audio_stuff(
-    left_sender: Sender<f32>,
-    right_sender: Sender<f32>) {
-    let host = cpal::default_host();
+    left_val_container: Arc<Mutex<f32>>,
+    right_val_container: Arc<Mutex<f32>>) {
+    
+    let host = cpal::host_from_id(cpal::HostId::Wasapi).expect("Failed to load host.");
 
     let device = host
-        .default_input_device()
-        .expect("no default output device");
+        .default_output_device()
+        .expect("No default output device.");
 
-    let supported_config = device.default_input_config().unwrap();
+    let supported_config = device.default_output_config().unwrap();
     let config = supported_config.config();
     
-    let channels = config.channels as usize;
+    println!("config: {:?}", config);
+
+    let channels = config.channels;
     
-    let handle_left = move |value: f32| {
-        println!("Left channel value: {}", value);
-        left_sender.send(value).unwrap();
+    let update_values = move |new_left: f32, new_right: f32| {
+        println!("Left channel value: {}", new_left);
+        println!("Right channel value: {}", new_right);
+        
+        let mut left_val = left_val_container.lock().unwrap();
+        *left_val = new_left;
+        
+        let mut right_val = right_val_container.lock().unwrap();
+        *right_val = new_right;
     };
 
-    let handle_right = move |value: f32| {
-        println!("Right channel value: {}", value);
-        right_sender.send(value).unwrap();
-    };
-    
     let stream = device.build_input_stream(
         &config,
         move |data: &[f32], _: &InputCallbackInfo| {
-            for frame in data.chunks(channels) {
-                
-                let mut channel = 0;
+            let frame_size = 800.0;
+            let chunk_size = (channels as f32 * frame_size) as usize;
 
-                for sample in frame.iter() {
+            for frame in data.chunks(chunk_size) {
 
-                    let normalized_sample = (*sample * 10000.0).abs();
+                let left_avg = (frame[0] * 1000.0).abs();
+                let right_avg = (frame[1] * 1000.0).abs();
 
-                    match channel {
-                        0 => handle_left(normalized_sample),
-                        1 => handle_right(normalized_sample),
-                        _ => println!("What?")
-                    }
-
-                    channel = channel + 1;
-                }
+                update_values(left_avg, right_avg);
             }
         },
         move |err| {
             panic!("Something bad happened: {}", err);
         },
         None)
-        .expect("Error building stream");
+        .expect("Error building stream.");
 
-    stream.play().expect("Error playing stream");
+    stream.play().expect("Error playing stream.");
 
-    thread::sleep(std::time::Duration::from_millis(30000));
+    thread::sleep(std::time::Duration::MAX);
 }
 
 async fn do_graphics_stuff(
-    left_val_rec: Receiver<f32>,
-    right_val_rec: Receiver<f32>) {
+    left_val_container: Arc<Mutex<f32>>,
+    right_val_container: Arc<Mutex<f32>>) {
     
-    let mut left_bar_height = 0.0;
-    let mut right_bar_height = 0.0;
-
+    clear_background(BLACK);
+    
     loop {
-        match left_val_rec.try_recv() {
-            Ok(value) => left_bar_height = value,
-            Err(_) => println!("No left channel data.")
-        }
-
-        match right_val_rec.try_recv() {
-            Ok(value) => right_bar_height = value,
-            Err(_) => println!("No right channel data.")
-        }
-
-        clear_background(BLACK);
+        let left_bar_height = *left_val_container.lock().unwrap();
+        let right_bar_height = *right_val_container.lock().unwrap();
 
         let right_bar_start_x = (screen_width() / 2.0) + 20.0;
         
@@ -102,13 +90,22 @@ async fn do_graphics_stuff(
 
 #[macroquad::main("BasicShapes")]
 async fn main() {
+    let left_val_container: Arc<Mutex<f32>> = Arc::new(Mutex::new(0.0));
+    let right_val_container: Arc<Mutex<f32>> = Arc::new(Mutex::new(0.0));
 
-    let (left_val_send, left_val_rec) = mpsc::channel::<f32>();
-    let (right_val_send, right_val_rec) = mpsc::channel::<f32>();
+    let left_val_audio_container = Arc::clone(&left_val_container);
+    let right_val_audio_container = Arc::clone(&right_val_container);
+
+    let left_val_graphics_container = Arc::clone(&left_val_container);
+    let right_val_graphics_container = Arc::clone(&right_val_container);
 
     thread::spawn(move || {
-        do_audio_stuff(left_val_send, right_val_send);
+        do_audio_stuff(
+            left_val_audio_container,
+            right_val_audio_container);
     });
     
-    do_graphics_stuff(left_val_rec, right_val_rec).await;
+    do_graphics_stuff(
+        left_val_graphics_container,
+        right_val_graphics_container).await;
 }

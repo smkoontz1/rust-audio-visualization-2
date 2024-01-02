@@ -1,9 +1,8 @@
 use std::sync::{Arc, Mutex};
-use std::sync::mpsc::{self, Sender, Receiver};
 use std::thread;
 
 use cpal::traits::{HostTrait, DeviceTrait, StreamTrait};
-use cpal::{InputCallbackInfo, OutputCallbackInfo};
+use cpal::InputCallbackInfo;
 use macroquad::prelude::*;
 
 fn do_audio_stuff(
@@ -37,10 +36,8 @@ fn do_audio_stuff(
     let stream = device.build_input_stream(
         &config,
         move |data: &[f32], _: &InputCallbackInfo| {
-            let frame_size = 800.0;
-            let chunk_size = (channels as f32 * frame_size) as usize;
-
-            for frame in data.chunks(chunk_size) {
+            
+            for frame in data.chunks(channels as usize) {
 
                 let left_avg = (frame[0] * 1000.0).abs();
                 let right_avg = (frame[1] * 1000.0).abs();
@@ -88,7 +85,7 @@ async fn do_graphics_stuff(
     }
 }
 
-#[macroquad::main("BasicShapes")]
+#[macroquad::main("Visualizer")]
 async fn main() {
     let left_val_container: Arc<Mutex<f32>> = Arc::new(Mutex::new(0.0));
     let right_val_container: Arc<Mutex<f32>> = Arc::new(Mutex::new(0.0));
